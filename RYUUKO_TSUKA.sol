@@ -295,7 +295,7 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
     bool public swapAndLiquifyEnabled = true;
     bool isTaxFreeTransfer = false;
     uint256 public ethPriceToSwap = 300000000000000000; //.3 ETH
-    uint256 public _maxWalletAmount = 5000000 * 10 ** _decimals;
+    uint256 public _maxWalletAmount = 20000000 * 10 ** _decimals;
     address public investmentAddress = 0xfDeB2f286F468898b33799a35Bd2E47E57A6307D;
     address public devAddress = 0x2D18C81d8ea099EA2E9814Ef1B3FABBC282Bf949;
     address public deadWallet = 0x000000000000000000000000000000000000dEaD;
@@ -888,7 +888,6 @@ contract DividendTracker is IERC20, Context, Ownable {
             block.timestamp
         );
     }
-
 
     function withdrawDividend() public virtual {
         _withdrawDividendOfUser(payable(msg.sender));
