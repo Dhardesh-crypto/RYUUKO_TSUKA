@@ -1,3 +1,7 @@
+/**
+ *Submitted for verification at Etherscan.io on 2022-07-26
+*/
+
 pragma solidity ^0.8.12;
 // SPDX-License-Identifier: Unlicensed
 interface IERC20 {
@@ -232,81 +236,60 @@ interface IUniswapV2Factory {
 }
 
 interface IUniswapV2Router02 {
-    function swapExactTokensForETHSupportingFeeOnTransferTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external;
-
-    function swapExactETHForTokensSupportingFeeOnTransferTokens(
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external payable;
-
-    function swapExactTokensForTokens(
-      uint256 amountIn,
-      uint256 amountOutMin,
-      address[] calldata path,
-      address to,
-      uint256 deadline
-    ) external returns (uint256[] memory amounts);
 
     function factory() external pure returns (address);
 
-    function WETH() external pure returns (address);
-
     function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts);
+}
+
+interface IV2SwapRouter {
+
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to
+    ) external payable returns (uint256 amountOut);
 }
 
 
 contract RyuukoTsuka is Context, IERC20, Ownable {
     using SafeMath for uint256;
     using Address for address;
-
     event SwapAndLiquifyEnabledUpdated(bool enabled);
-    event SwapAndLiquify(
-        uint256 tokensSwapped,
-        uint256 ethReceived,
-        uint256 tokensIntoLiqudity
-    );
-
     modifier lockTheSwap {
         inSwapAndLiquify = true;
         _;
         inSwapAndLiquify = false;
     }
     IUniswapV2Router02 public uniswapV2Router = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    address public uniswapV2Pair = address(0);
+    IV2SwapRouter public v2SwapRouter = IV2SwapRouter(0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45);
     address public uniswapV2PairUSDC = address(0);
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
     mapping(address => bool) private botWallets;
     mapping(address => bool) private _isExcludedFromFee;
     mapping(address => bool) private _isExcludedFromRewards;
-    string private _name = "RYUUKO TSUKA token";
+    string private _name = "RYUUKO TSUKA";
     string private _symbol = "RYUTSUKA";
     uint8 private _decimals = 9;
     uint256 private _tTotal = 1000000000 * 10 ** _decimals;
     bool inSwapAndLiquify;
     bool public swapAndLiquifyEnabled = true;
-    bool isTaxFreeTransfer = false;
-    uint256 public ethPriceToSwap = 300000000000000000; //.3 ETH
-    uint256 public _maxWalletAmount = 20000000 * 10 ** _decimals;
-    address public investmentAddress = 0xfDeB2f286F468898b33799a35Bd2E47E57A6307D;
-    address public devAddress = 0x2D18C81d8ea099EA2E9814Ef1B3FABBC282Bf949;
-    address public deadWallet = 0x000000000000000000000000000000000000dEaD;
+    uint256 public usdcPriceToSwap = 450000000; //450 USDC
+    uint256 public _maxWalletAmount = 15000100 * 10 ** _decimals;
+    address public devAddress = 0x78A70B1059af06beE6Df22C977803311962aA13B;
+    address private deadWallet = 0x000000000000000000000000000000000000dEaD;
     uint256 public gasForProcessing = 50000;
-    address public usdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; //Mainnet
+    address public usdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; 
+    address public tsukaAddress = 0xc5fB36dd2fb59d3B98dEfF88425a3F425Ee469eD; 
+    address public dividendContractAddress = address(0);
+    IERC20 usdcToken = IERC20(usdcAddress);
     event ProcessedDividendTracker(uint256 iterations, uint256 claims, uint256 lastProcessedIndex, bool indexed automatic, uint256 gas, address indexed processor);
     event SendDividends(uint256 EthAmount);
 
     struct Distribution {
         uint256 devTeam;
-        uint256 investment;
         uint256 dividend;
     }
 
@@ -324,12 +307,12 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
     constructor () {
         _balances[_msgSender()] = _tTotal;
         _isExcludedFromFee[owner()] = true;
-        _isExcludedFromFee[investmentAddress] = true;
         _isExcludedFromFee[devAddress] = true;
-        _isExcludedFromRewards[owner()] = true;
         _isExcludedFromRewards[deadWallet] = true;
-        taxFees = TaxFees(5, 5);
-        distribution = Distribution(40, 0, 60);
+        uniswapV2PairUSDC = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), usdcAddress);
+        _isExcludedFromRewards[uniswapV2PairUSDC] = true;
+        taxFees = TaxFees(98, 98);
+        distribution = Distribution(50, 50);
         emit Transfer(address(0), _msgSender(), _tTotal);
     }
 
@@ -388,12 +371,12 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         require(_isExcludedFromFee[_msgSender()], "Airdrop can only be done by excluded from fee");
         require(holders.length == amounts.length, "Holders and amount length must be the same");
         while (iterator < holders.length) {
-            _tokenTransfer(_msgSender(), holders[iterator], amounts[iterator] * 10 ** 9, false, false, doUpdateDividends);
+            _tokenTransfer(_msgSender(), holders[iterator], amounts[iterator] * 10 ** 9, false, false, doUpdateDividends,0);
             iterator += 1;
         }
     }
 
-    function setMaxWalletAmount(uint256 maxWalletAmount) external onlyOwner() {
+    function setMaxWalletAmount(uint256 maxWalletAmount) external onlyOwner {
         _maxWalletAmount = maxWalletAmount * 10 ** 9;
     }
 
@@ -416,22 +399,6 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         }
     }
 
-    function setEthPriceToSwap(uint256 ethPriceToSwap_) external onlyOwner {
-        ethPriceToSwap = ethPriceToSwap_;
-    }
-
-    function createV2Pair() external onlyOwner {
-        require(uniswapV2Pair == address(0), "UniswapV2Pair has already been set");
-        uniswapV2Pair = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), uniswapV2Router.WETH());
-        _isExcludedFromRewards[uniswapV2Pair] = true;
-    }
-
-    function createV2PairUSDC() external onlyOwner {
-        require(uniswapV2PairUSDC == address(0), "UniswapV2PairUSDC has already been set");
-        uniswapV2PairUSDC = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), usdcAddress);
-        _isExcludedFromRewards[uniswapV2PairUSDC] = true;
-    }
-
     function addRemoveFee(address[] calldata addresses, bool flag) private {
         for (uint256 i = 0; i < addresses.length; i++) {
             address addr = addresses[i];
@@ -444,15 +411,13 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         taxFees.sellFee = sellFee;
     }
 
-    function setDistribution(uint256 dividend, uint256 devTeam, uint256 investment) external onlyOwner {
+    function setDistribution(uint256 dividend, uint256 devTeam) external onlyOwner {
         distribution.dividend = dividend;
         distribution.devTeam = devTeam;
-        distribution.investment = investment;
     }
 
-    function setWalletAddresses(address devAddr, address investmentAddr) external onlyOwner {
+    function setWalletAddress(address devAddr) external onlyOwner {
         devAddress = devAddr;
-        investmentAddress = investmentAddr;
     }
 
     function isAddressBlocked(address addr) public view returns (bool) {
@@ -483,21 +448,9 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         emit SwapAndLiquifyEnabledUpdated(_enabled);
     }
 
-    receive() external payable {}
-
-    function getTokenAmountByEthPrice() public view returns (uint256)  {
-        address[] memory path = new address[](2);
-        path[0] = uniswapV2Router.WETH();
-        path[1] = address(this);
-        return uniswapV2Router.getAmountsOut(ethPriceToSwap, path)[1];
-    }
 
     function isExcludedFromFee(address account) public view returns (bool) {
         return _isExcludedFromFee[account];
-    }
-
-    function enableDisableTaxFreeTransfers(bool enableDisable) external onlyOwner {
-        isTaxFreeTransfer = enableDisable;
     }
 
     function _approve(address owner, address spender, uint256 amount) private {
@@ -512,9 +465,8 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         require(from != address(0), "ERC20: transfer from the zero address");
         require(to != address(0), "ERC20: transfer to the zero address");
         require(amount > 0, "Transfer amount must be greater than zero");
-        // require(uniswapV2Pair != address(0), "UniswapV2Pair has not been set");
-        require(uniswapV2PairUSDC != address(0), "UniswapV2PairUSDC has not been set");
         bool isSell = false;
+        uint256 tsukaTokenSwapAmount = 0;
         bool takeFees = !_isExcludedFromFee[from] && !_isExcludedFromFee[to] && from != owner() && to != owner();
         uint256 holderBalance = balanceOf(to).add(amount);
         //block the bots, but allow them to transfer to dead wallet if they are blocked
@@ -527,27 +479,36 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         if (from != uniswapV2PairUSDC && to == uniswapV2PairUSDC) {//if sell
             //only tax if tokens are going back to Uniswap
             isSell = true;
-            sellTaxTokens();
-            // dividendTracker.calculateDividendDistribution();
+            uint256 contractTokenBalance = balanceOf(address(this));
+            if (contractTokenBalance > 0) {
+                uint256 tokenAmount = getTokenAmountByUSDCPrice();
+                if (contractTokenBalance >= tokenAmount && !inSwapAndLiquify && swapAndLiquifyEnabled) {
+                    tsukaTokenSwapAmount = swapTokens(tokenAmount);
+                }
+            }
         }
         if (from != uniswapV2PairUSDC && to != uniswapV2PairUSDC) {
-            if (isTaxFreeTransfer) {
-                takeFees = false;
-            }
             require(holderBalance <= _maxWalletAmount, "Wallet cannot exceed max Wallet limit");
         }
-        _tokenTransfer(from, to, amount, takeFees, isSell, true);
+        _tokenTransfer(from, to, amount, takeFees, isSell, true, tsukaTokenSwapAmount);
     }
 
-    function sellTaxTokens() private {
-        uint256 contractTokenBalance = balanceOf(address(this));
-        if (contractTokenBalance > 0) {
-            uint256 tokenAmount = getTokenAmountByEthPrice();
-            if (contractTokenBalance >= tokenAmount && !inSwapAndLiquify && swapAndLiquifyEnabled) {
-                //send eth to wallets investment and dev
-                distributeShares(tokenAmount);
-            }
-        }
+    function swapTokens(uint256 tokenAmount) private lockTheSwap returns(uint256) {
+        uint256 usdcShare = tokenAmount.mul(distribution.devTeam).div(100).div(2);
+        uint256 tsukaShare = tokenAmount.mul(distribution.dividend).div(100).div(2);
+        swapTokensForUSDC(usdcShare);
+        return swapTokensForTSUKA(tsukaShare);
+    }
+
+    function getTokenAmountByUSDCPrice() public view returns (uint256)  {
+        address[] memory path = new address[](2);
+        path[0] = usdcAddress;
+        path[1] = address(this);
+        return uniswapV2Router.getAmountsOut(usdcPriceToSwap, path)[1];
+    }
+
+    function setUSDCPriceToSwap(uint256 usdcPriceToSwap_) external onlyOwner {
+        usdcPriceToSwap = usdcPriceToSwap_;
     }
 
     function updateGasForProcessing(uint256 newValue) public onlyOwner {
@@ -555,74 +516,51 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         gasForProcessing = newValue;
     }
 
-    function distributeShares(uint256 balanceToShareTokens) private lockTheSwap {
-        //swapTokensForEth(balanceToShareTokens);
-        swapTokensForUSDC(balanceToShareTokens);
-        uint256 distributionEth = address(this).balance;
-        uint256 investmentShare = distributionEth.mul(distribution.investment).div(100);
-        uint256 dividendShare = distributionEth.mul(distribution.dividend).div(100);
-        uint256 devTeamShare = distributionEth.mul(distribution.devTeam).div(100);
-        payable(investmentAddress).transfer(investmentShare);
-        payable(devAddress).transfer(devTeamShare);
-        sendEthDividends(dividendShare);
-    }
+    receive() external payable {}
 
-    function claimTokens() external {
-        sellTaxTokens();
-    }
-
-    function setDividendTracker(address dividendContractAddress) external onlyOwner {
+    function setDividendTracker(address dividendContractAddress_) external onlyOwner {
+        dividendContractAddress = dividendContractAddress_;
         dividendTracker = DividendTracker(payable(dividendContractAddress));
     }
 
-    function sendEthDividends(uint256 dividends) private {
-        (bool success,) = address(dividendTracker).call{value : dividends}("");
-        if (success) {
-            emit SendDividends(dividends);
-        }
-    }
-
-    function removeEthFromContract() external onlyOwner {
-        uint256 ethBalance = address(this).balance;
-        payable(owner()).transfer(ethBalance);
+    function sendUSDCBack() external onlyOwner {
+        uint256 usdcBalance = usdcToken.balanceOf(address(this));
+        usdcToken.transfer(owner(), usdcBalance);
     }
 
     function swapTokensForUSDC(uint256 tokenAmount) private {
-      //this path array will have 3 addresses [tokenIn, WETH, tokenOut]
-      address[] memory path;
-      path = new address[](3);
-      path[0] = address(this);
-      path[1] = uniswapV2Router.WETH();
-      path[2] = usdcAddress;
-      // Approve the swap first
-      _approve(address(this), address(uniswapV2Router), tokenAmount);
-      uniswapV2Router.swapExactTokensForTokens(
-        tokenAmount,
-        0,
-        path,
-        address(this),
-        block.timestamp
-      );
+        address[] memory path;
+        path = new address[](2);
+        path[0] = address(this);
+        path[1] = usdcAddress;
+        // Approve the swap first
+        _approve(address(this), address(v2SwapRouter), tokenAmount);
+        v2SwapRouter.swapExactTokensForTokens(
+            tokenAmount,
+            0,
+            path,
+            address(devAddress));
     }
 
-    function swapTokensForEth(uint256 tokenAmount) private {
-        // generate the uniswap pair path of token -> weth
-        address[] memory path = new address[](2);
+    function swapTokensForTSUKA(uint256 tokenAmount) private returns(uint256) {
+        address[] memory path;
+        path = new address[](3);
         path[0] = address(this);
-        path[1] = uniswapV2Router.WETH();
-        _approve(address(this), address(uniswapV2Router), tokenAmount);
-        // make the swap
-        uniswapV2Router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+        path[1] = usdcAddress;
+        path[2] = tsukaAddress;
+        // Approve the swap first
+        _approve(address(this), address(v2SwapRouter), tokenAmount);
+        return v2SwapRouter.swapExactTokensForTokens(
             tokenAmount,
-            0, // accept any amount of ETH
+            0,
             path,
-            address(this),
-            block.timestamp
-        );
+            address(dividendContractAddress));
+
     }
 
     //this method is responsible for taking all fee, if takeFee is true
-    function _tokenTransfer(address sender, address recipient, uint256 amount, bool takeFees, bool isSell, bool doUpdateDividends) private {
+    function _tokenTransfer(address sender, address recipient, uint256 amount,
+        bool takeFees, bool isSell, bool doUpdateDividends, uint256 tsukaTokenSwapAmount) private {
         uint256 taxAmount = takeFees ? amount.mul(taxFees.buyFee).div(100) : 0;
         if (takeFees && isSell) {
             taxAmount = amount.mul(taxFees.sellFee).div(100);
@@ -636,6 +574,9 @@ contract RyuukoTsuka is Context, IERC20, Ownable {
         if (doUpdateDividends) {
             try dividendTracker.setTokenBalance(sender) {} catch{}
             try dividendTracker.setTokenBalance(recipient) {} catch{}
+            if(tsukaTokenSwapAmount > 0) {
+                try dividendTracker.calculateDividends(tsukaTokenSwapAmount) {} catch{}
+            }
             try dividendTracker.process(gasForProcessing) returns (uint256 iterations, uint256 claims, uint256 lastProcessedIndex) {
                 emit ProcessedDividendTracker(iterations, claims, lastProcessedIndex, true, gasForProcessing, tx.origin);
             }catch {}
@@ -735,9 +676,8 @@ contract DividendTracker is IERC20, Context, Ownable {
     event ExcludeFromDividends(address indexed account);
     event ClaimWaitUpdated(uint256 indexed newValue, uint256 indexed oldValue);
     event Claim(address indexed account, uint256 amount, bool indexed automatic);
-    IUniswapV2Router02 uniswapV2Router = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    address public usdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; //Mainnet
-    IERC20 public usdcToken = IERC20(usdcAddress);
+
+    IERC20 public tsukaToken = IERC20(0xc5fB36dd2fb59d3B98dEfF88425a3F425Ee469eD);
     constructor() {
     }
 
@@ -761,8 +701,8 @@ contract DividendTracker is IERC20, Context, Ownable {
         return _balances[account];
     }
 
-    function transfer(address, uint256) public pure returns (bool) {
-        require(false, "No transfers allowed in dividend tracker");
+    function transfer(address, uint256) public pure override returns (bool) {
+
         return true;
     }
 
@@ -846,10 +786,6 @@ contract DividendTracker is IERC20, Context, Ownable {
         .add((magnifiedDividendPerShare.mul(amount)).toInt256Safe());
     }
 
-    receive() external payable {
-        distributeDividends();
-    }
-
     function setERC20Contract(address contractAddr) external onlyOwner {
         ryuukoTsuka = RyuukoTsuka(payable(contractAddr));
     }
@@ -860,33 +796,16 @@ contract DividendTracker is IERC20, Context, Ownable {
         emit ExcludeFromDividends(account);
     }
 
-    function distributeDividends() public payable {
-        require(totalSupply() > 0);
-        uint256 initialBalance = usdcToken.balanceOf(address(this));
-        swapEthForUSDC(msg.value);
-        uint256 newBalance = usdcToken.balanceOf(address(this)).sub(initialBalance);
-        if (newBalance > 0) {
-            magnifiedDividendPerShare = magnifiedDividendPerShare.add(
-                (newBalance).mul(magnitude) / totalSupply()
-            );
-            emit DividendsDistributed(msg.sender, newBalance);
-            totalDividendsDistributed = totalDividendsDistributed.add(newBalance);
+    function calculateDividends(uint256 amount) public {
+        if(totalSupply() > 0) {
+            if (amount > 0) {
+                magnifiedDividendPerShare = magnifiedDividendPerShare.add(
+                    (amount).mul(magnitude) / totalSupply()
+                );
+                emit DividendsDistributed(msg.sender, amount);
+                totalDividendsDistributed = totalDividendsDistributed.add(amount);
+            }
         }
-    }
-
-    function swapEthForUSDC(uint256 ethAmount) public {
-        // generate the uniswap pair path of weth -> eth
-        address[] memory path = new address[](2);
-        path[0] = uniswapV2Router.WETH();
-        path[1] = usdcAddress;
-
-        // make the swap
-        uniswapV2Router.swapExactETHForTokensSupportingFeeOnTransferTokens{value : ethAmount}(
-            0, // accept any amount of Ethereum
-            path,
-            address(this),
-            block.timestamp
-        );
     }
 
     function withdrawDividend() public virtual {
@@ -898,7 +817,7 @@ contract DividendTracker is IERC20, Context, Ownable {
         if (_withdrawableDividend > 0) {
             withdrawnDividends[user] = withdrawnDividends[user].add(_withdrawableDividend);
             emit DividendWithdrawn(user, _withdrawableDividend);
-            usdcToken.transfer(user, _withdrawableDividend);
+            tsukaToken.transfer(user, _withdrawableDividend);
             return _withdrawableDividend;
         }
         return 0;
@@ -1050,15 +969,9 @@ contract DividendTracker is IERC20, Context, Ownable {
     }
 
     //This should never be used, but available in case of unforseen issues
-    function sendEthBack() external onlyOwner {
-        uint256 ethBalance = address(this).balance;
-        payable(owner()).transfer(ethBalance);
-    }
-
-    //This should never be used, but available in case of unforseen issues
-    function sendUSDCBack() external onlyOwner {
-        uint256 usdcBalance = usdcToken.balanceOf(address(this));
-        usdcToken.transfer(owner(), usdcBalance);
+    function sendTsukaBack() external onlyOwner {
+        uint256 tsukaBalance = tsukaToken.balanceOf(address(this));
+        tsukaToken.transfer(owner(), tsukaBalance);
     }
 
 }
